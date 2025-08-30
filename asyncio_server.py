@@ -1,105 +1,146 @@
-import asyncio, websockets, json, redis.asyncio as redis
-import httpx, pdfplumber, io
+# Skrip server asyncio
 
-# Variabel untuk menyimpan koneksi yang aktif
-# Format: {'group_name': websocket_connection}
+import asyncio, websockets, json
+import httpx, pdfplumber, redis.asyncio as redis
+
+# Konfigurasi Server Redis
 CONNECTED_CLIENTS = {}
-
-# Channel Redis
 REDIS_CHANNEL = "upload_notifications"
-
-# Inisialisasi Koneksi Redis
 redis_client = redis.Redis(
-        host='localhost',
-        port=6379, # port TCP Redis,
-        db=0,
-        decode_responses=True
-    )
+    host='localhost', 
+    port=6379, 
+    db=0, 
+    decode_responses=True
+)
 
-# URL API Ollama di server remote
-OLLAMA_API_URL = "http://10.0.8.230:11434/api/generate/" 
+# Konfigurasi API Ollama dan model di server remote
+OLLAMA_API_URL = "http://10.0.8.230:11434/api/generate" 
+MODEL_NAME = "gemma_summarizer_v3.3:latest" 
 
-# Nama model Ollama
-MODEL_NAME = "gemma3:latest"
+# Template prompt untuk model
+# Prompt yang sama saat fine-tuning dan tanpa bagian jawaban
+prompt_template_inference = """Berikut adalah teks dari dokumen evaluasi tentara yang mencakup bab inti yaitu Analisa dan Evaluasi, serta Kesimpulan dan Saran. Tugas Anda adalah menganalisis teks di atas untuk membuat ringkasan yang komprehensif dan terstruktur dalam Bahasa Indonesia. Ikuti instruksi berikut secara ketat untuk menyusun ringkasan:
 
-# Fungsi meringkas file PDF dengan model Ollama
-async def summarize_file(file_path):
+1.  **Analisa dan Evaluasi:**
+* Ringkas temuan utama dari analisis dan evaluasi yang dilakukan terhadap operasi secara terurut.
+* Sajikan poin-poin penting dari bagian ini dalam bentuk daftar. 
+* Hindari penggunaan kata/kalimat yang negatif.
+
+2.  **Kesimpulan dan Saran:**
+* Mulai dengan satu paragraf ringkasan yang mencakup kesimpulan utama dari evaluasi.
+* Setelah kesimpulan, sajikan semua saran yang diajukan dalam dokumen dalam bentuk daftar bernomor. 
+* Jangan menampilkan saran yang anda asumsikan/buat sendiri.
+
+---
+
+### Dokumen:
+{}
+
+### Jawaban:
+"""
+
+# Kata kunci pencarian bab
+START_KEYWORDS = [
+    "BAB III\nANALISA DAN EVALUASI",
+    "BAB IV\nANALISA DAN EVALUASI", 
+    "BAB-IV\nANALISA DAN EVALUASI", 
+    "BAB IV\nEVALUASI", 
+    "BAB IV\nANALISA EVALUASI",
+    "BAB IV\nANALISIS DAN EVALUASI"
+    ]
+
+END_KEYWORDS = [
+    "BAB VI\nPENUTUP",
+    "BAB-VI\nPENUTUP",
+    "BAB V\nPENUTUP"
+    ]
+
+# Fungsi menemukan halaman di mana kata kunci muncul di dokumen
+def find_start_page(pdf_path, keyword):
     try:
-        with open(file_path, "rb") as f:
-            pdf_bytes = io.BytesIO(f.read())
-
-        full_text_content = []
-        with pdfplumber.open(pdf_bytes) as pdf:
-            all_pages = pdf.pages
-            
-            # Memulai ekstrak dari Bab IV
-            start_keyword = "BAB IV"
-            start_page_index = 0
-            end_page_index = len(all_pages)
-
-            # Mencari halaman tempat Bab IV muncul
-            for i, page in enumerate(all_pages):
+        with pdfplumber.open(pdf_path) as pdf:
+            for i, page in enumerate(pdf.pages):
                 text = page.extract_text()
-                if text and start_keyword in text:
-                    start_page_index = i
+                if text and keyword.lower() in text.lower():
+                    print(f"  > Kata kunci '{keyword}' ditemukan di halaman {i + 1}.")
+                    return i
+        print(f"  > Kata kunci '{keyword}' tidak ditemukan.")
+        return None
+    except Exception as e:
+        print(f"    ! Error saat mencari halaman awal: {e}")
+        return None
+
+# Fungsi ekstrak teks dari PDF
+def extract_chapter_text(pdf_path, start_keyword_list, end_keyword):
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            start_keyword = None
+            for keyword in start_keyword_list:
+                start_page_index = find_start_page(pdf_path, keyword)
+                if start_page_index:
+                    start_keyword = keyword
                     break
-            
-            relevant_pages = all_pages[start_page_index:end_page_index]
-            print(f"Mengekstrak konten dari halaman {start_page_index + 1} hingga {end_page_index}.")
 
-            # Mengekstrak teks dan tabel dari halaman yang relevan
-            for page in relevant_pages:
-                text = page.extract_text()
+            if start_page_index is None:
+                return None
+
+            # Gabungkan teks dari halaman awal hingga akhir dokumen
+            full_text_from_start = ""
+            for i in range(start_page_index, len(pdf.pages)):
+                text = pdf.pages[i].extract_text(x_tolerance=2)
                 if text:
-                    full_text_content.append(text)
+                    full_text_from_start += text + "\n\n"
+            
+            # PEMOTONGAN BERBASIS TEKS (AKURAT) ---
+            start_pos = full_text_from_start.lower().find(start_keyword.lower())
+            end_pos = full_text_from_start.lower().find(end_keyword.lower(), start_pos)
 
-                tables = page.extract_tables()
-                if tables:
-                    full_text_content.append("\n--- DATA TABEL ---\n")
-                    for table in tables:
-                        for row in table:
-                            cleaned_row = [str(cell) if cell is not None else "" for cell in row]
-                            full_text_content.append(" | ".join(cleaned_row))
-                        full_text_content.append("--- AKHIR DATA TABEL ---\n")
-        
-        full_text = "\n".join(full_text_content)
-        print(f"Mengirim teks ke model Ollama...")
+            chapter_text = full_text_from_start[start_pos:]
+            
+            if end_pos != -1:
+                relative_end_pos = end_pos - start_pos
+                chapter_text = chapter_text[:relative_end_pos]
+            
+            return chapter_text
+
+    except Exception as e:
+        print(f"    ! Gagal mengekstrak teks: {e}")
+        return None
     
-        prompt = f"""Di bawah ini adalah teks dari sebuah dokumen:
+# Fungsi membuat prompt dan ditampilkan ke web
+def initialize_prompt(file_path):
+    try:
+        full_text = extract_chapter_text(file_path, START_KEYWORDS, "BAB VI")
+        if not full_text:
+            return None, "Dokumen tidak berisi teks yang dapat dibaca."
 
-        {full_text}
+        # Membuat template prompt awal
+        prompt = prompt_template_inference.format(full_text.strip())
+        return full_text, prompt
+    
+    except Exception as e:
+        print(f"Error saat membuat prompt awal: {e}")
+        return None, f"Gagal mengekstrak teks dari file: {e}"
 
-        ---
-
-        Tugas Anda adalah membuat ringkasan terstruktur dari dokumen tersebut
-
-        Ringkasan:"""
-        
+# Fungsi mengirimkan prompt ke model
+async def summarize_file(final_prompt):
+    try:
         payload = {
             "model": MODEL_NAME, 
-            "prompt": prompt, 
-            "stream": False}
+            "prompt": final_prompt, 
+            "stream": False
+        }
 
-        # Mengirim request ke API Ollama untuk mendapatkan ringkasan
-        async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
+        print(f"Mengirim teks ke model Ollama: {MODEL_NAME}...")
+        async with httpx.AsyncClient(timeout=180) as client:
             response = await client.post(OLLAMA_API_URL, json=payload)
             response.raise_for_status()
-            summary_file = response.json().get('response', 'Gagal mendapat ringkasan.')
-        
-        print("Ringkasan berhasil dibuat.")
-        return summary_file
+            return response.json().get('response', 'Gagal mendapat ringkasan.')
 
-    except httpx.HTTPStatusError as e:
-        error_message = f"Error HTTP dari Ollama: {e.response.status_code} - {e.response.text}"
-        print(error_message)
-        return error_message
     except Exception as e:
-        error_message = f"Error saat memproses dengan Ollama: {type(e).__name__} - {e}"
-        print(error_message)
-        return error_message
+        return f"Error saat memproses dengan Ollama: {e}"
 
-
-# Fungsi untuk listener dari Redis
+# Fungsi untuk menerima file dari Redis, memanggil fungsi meringkas file, dan meneruskan hasil ringkasan ke browser
 async def listener():
     async with redis_client.pubsub() as pubsub:
         await pubsub.subscribe(REDIS_CHANNEL)
@@ -111,47 +152,55 @@ async def listener():
                     group_name = data.get('group_name')
                     file_path = data.get('file_path')
                     filename = data.get('filename')
-                    
-                    if file_path is None:
-                        print("Error: Pesan dari Redis tidak berisi 'file_path'")
-                        continue
-                    
-                    summary = await summarize_file(file_path)
+
+                    # Mengirim prompt awal ke browser
+                    original_text, initial_prompt = initialize_prompt(file_path)
                     websocket = CONNECTED_CLIENTS.get(group_name)
+
                     if websocket:
-                        print(f"Meneruskan pesan ke browser dengan grup: {group_name}")
-                        payload = {'status': 'success', 'summary': summary, 'filename': filename}
-                        await websocket.send(json.dumps({'message': payload}))
+                        payload = {
+                            'type': 'prompt_ready', # Tipe pesan baru
+                            'prompt': initial_prompt,
+                            'filename': filename
+                        }
+
+                        await websocket.send(json.dumps({"message": payload}))
+
             except Exception as e:
                 print(f"Error dari listener: {e}")
 
-# Fungsi untuk menangani setiap koneksi WebSocket
-async def handler(websocket):
-    path = websocket.path
+# Fungsi untuk menangani koneksi websocket
+async def handler(websocket, path):
     group_name = path.strip('/')
     CONNECTED_CLIENTS[group_name] = websocket
-    print(f"{group_name} connected")
-    print(f"Total client: {len(CONNECTED_CLIENTS)}")
-
+    print(f"{group_name} terhubung. Total klien: {len(CONNECTED_CLIENTS)}")
     try:
-        # Koneksi terbuka terus-menerus
         async for message in websocket:
-            pass
+            data = json.loads(message)
+            
+            # Browser mengirim kembali prompt final
+            if data.get('type') == 'execute_summarization':
+                final_prompt = data.get('prompt')
+                filename = data.get('filename')
+                
+                # Eksekusi dan kirim hasil akhir
+                summary = await summarize_file(final_prompt)
+                
+                # Kirim hasil ringkasan kembali ke browser
+                payload = {
+                    'type': 'summary_complete', # Tipe pesan baru
+                    'summary': summary.replace('**', '').replace('*', '-'),
+                    'filename': filename
+                }
+                await websocket.send(json.dumps({"message": payload}))
     finally:
-        # Menghapus koneksi saat browser ditutup
         del CONNECTED_CLIENTS[group_name]
-        print(f"{group_name} disconnected")
-        print(f"Total client: {len(CONNECTED_CLIENTS)}")
+        print(f"{group_name} terputus. Total klien: {len(CONNECTED_CLIENTS)}")
 
-
-# Fungsi utama untuk menjalankan server
+# Fungsi utama
 async def main():
     print("Memulai server websocket di port 9000")
-
-    # Listener Redis
     listener_task = asyncio.create_task(listener())
-
-    # Server WebSocket
     async with websockets.serve(handler, "localhost", 9000):
         await listener_task
 
