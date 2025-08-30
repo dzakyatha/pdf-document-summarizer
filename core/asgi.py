@@ -1,5 +1,5 @@
 """
-ASGI config for core project.
+ASGI config for chunkproject project.
 
 It exposes the ASGI callable as a module-level variable named ``application``.
 
@@ -10,7 +10,17 @@ https://docs.djangoproject.com/en/5.2/howto/deployment/asgi/
 import os
 
 from django.core.asgi import get_asgi_application
+from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.auth import AuthMiddlewareStack
+import app.routing as route
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'chunkproject.settings')
 
-application = get_asgi_application()
+application = ProtocolTypeRouter({
+    'http': get_asgi_application(),
+    'websocket':AuthMiddlewareStack(
+        URLRouter(
+            route.routing.websocket_urlpatterns
+        )
+    )
+})
