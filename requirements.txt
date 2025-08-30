@@ -1,0 +1,11 @@
+django
+psycopg2-binary
+django-rq
+redis
+channels
+channels_redis
+httpx
+django-crispy-forms
+crispy-bootstrap5
+pdfplumber
+websockets==10.4
