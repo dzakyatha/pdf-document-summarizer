@@ -80,7 +80,6 @@ html, body {
     margin-top: 20px;
 }
 .progress-item p {
-    margin-bottom: 5px;
     font-weight: 500;
 }
 .progress-item progress {
@@ -88,8 +87,11 @@ html, body {
 }
 
 .upload-button-container {
-    width: 100%;
-    max-width: 760px; 
+    width: 70%;
+    max-width: 540px; 
+    margin: 0 auto;
+    padding: 10px 0;
+    align-self: center;
 }
 
 .btn-primary {
