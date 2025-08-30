@@ -1,27 +1,29 @@
 {% extends "layout.html" %}
 {% load static %}
 
-{% block title %} Home {% endblock %}
+{% block title %} PDF Summarizer {% endblock %}
 
 {% block content %}
-    <div class="container">
-        <header class="header">
-            <h1>Summarize your PDF</h1>
-            <p>Upload your file to get summarize</p>
-        </header>
+<div class="container">
+    <header class="header">
+        <h1>Upload PDF Documents</h1>
+        <p>Drag and drop files into the zone below to get summarized</p>
+    </header>
 
-        <main class="main">
-            <div class="controls">
-                <label for="total-input-files">Berapa file yang ingin di-upload?</label>
-                <input type="number" id="total-input-files" value="1" min="0" max="10">
-                <button type="button" id="generate-upload-slots" class="btn-secondary">Submit</button>
+    <main class="main">
+        <div id="drop-zone">
+            <div id="drop-zone-text">
+                <p>Drag & Drop files here</p>
+                <input type="file" id="file-input" multiple hidden>
             </div>
+        </div>
 
-            <form id="upload-form">
-                <div id="upload-slots-container"></div>
-                
-                <button type="submit" id="upload-btn" class="btn-primary" style="display: none;">Mulai Upload</button>
-            </form>
-        </main>
-    </div>
+        <div id="progress-preview-area">
+             </div>
+
+        <div class="upload-button-container">
+            <button type="button" id="upload-btn" class="btn-primary" style="display: none;">Upload Files</button>
+        </div>
+    </main>
+</div>
 {% endblock %}

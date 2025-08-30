@@ -1,192 +1,136 @@
-// Ambil elemen dari DOM
-document.addEventListener('DOMContentLoaded', ()=> {
-
-    const generateButton = document.getElementById('generate-upload-slots');
-    const totalFilesInput = document.getElementById('total-input-files');
-    const slotsContainer = document.getElementById('upload-slots-container');
-    const uploadForm = document.getElementById('upload-form');
+document.addEventListener('DOMContentLoaded', () => {
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
     const uploadBtn = document.getElementById('upload-btn');
-    
-    // fungsi untuk generate slot upload
-    function createUploadSlots(){
-        const totalSlots = parseInt(totalFilesInput.value, 10);
-        console.log(`Total slots yang akan dibuat: ${totalSlots}`); // DEBUG
-        slotsContainer.innerHTML = '';
+    const progressPreviewArea = document.getElementById('progress-preview-area');
 
-        if (totalSlots > 0) {
-            for (let i = 1; i <= totalSlots; i++){
-                const slotHTML = `
-                    <div class="upload-slot" id="slot-container-${i}">
-                        <div class="upload-slot-header">File ${i}</div>
-                        <input type="file" id="file-input-${i}" class="file-input">
-                        <div id="progress-container-${i}" style="display: none; margin-top: 10px;">
-                            <p id="filename-${i}" style="margin-bottom: 5px;color: #edf0f3;"></p>
-                            <progress id="progress-${i}" value="0" max="100" style="width: 100%;"></progress>
-                            <div id="preview-${i}" style="margin-top: 10px;"></div>
+    let filesToUpload = [];
+
+    // Mencegah browser membuka file saat di-drag
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        window.addEventListener(eventName, e => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+    });
+
+    // Menangani file baru dari drag & drop
+    function handleFiles(newFiles) {
+        progressPreviewArea.innerHTML = '';
+        for (const file of newFiles) {
+            if (!filesToUpload.some(f => f.name === file.name && f.size === file.size)) {
+                filesToUpload.push(file);
+            }
+        }
+        updateFileListUI();
+    }
+
+    // Menampilkan daftar file dan progress bar awal
+    function updateFileListUI() {
+        progressPreviewArea.innerHTML = '';
+        if (filesToUpload.length > 0) {
+            filesToUpload.forEach((file, index) => {
+                const cleanFileName = file.name.replace(/[^a-zA-Z0-9_-]/g, '');
+                const fileItemHTML = `
+                    <div class="progress-item" id="item-${cleanFileName}">
+                        <div class="file-info">
+                            <span>${file.name}</span>
+                            <button type="button" class="remove-file-btn" data-index="${index}">&times;</button>
                         </div>
-                        <style>
-                            .upload-slot-header {
-                                font-weight: 500;
-                                color: #edf0f3;
-                                margin-bottom: 10px;
-                            }
-                            .upload-slot input[type="file"] {
-                                margin-top: 10px;
-                                color: #edf0f3;
-                            }
-                            .btn-primary {
-                                background-color: #1a73e8;
-                                color: rgb(242, 242, 247);
-                                width: 100%;
-                                font-size: 1.1rem;
-                                padding: 12px;
-                            }
-                        </style>
+                        <progress id="progress-${cleanFileName}" value="0" max="100"></progress>
+                        <div id="preview-${cleanFileName}"></div>
                     </div>
                 `;
-                slotsContainer.insertAdjacentHTML('beforeend', slotHTML);
-            }
-            uploadBtn.style.display = 'block'; // menampilkan tombol upload
+                progressPreviewArea.insertAdjacentHTML('beforeend', fileItemHTML);
+            });
+            uploadBtn.style.display = 'block';
         } else {
-            uploadBtn.style.display = 'none'; // jika tidak ada slot
+            uploadBtn.style.display = 'none';
         }
     }
 
-    // event listener tombol generate slot upload
-    generateButton.addEventListener('click', createUploadSlots);
+    // Event listeners untuk drop zone
+    dropZone.addEventListener('dragover', () => dropZone.classList.add('dragover'));
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', e => {
+        dropZone.classList.remove('dragover');
+        handleFiles(e.dataTransfer.files);
+    });
 
-
-    // fungsi upload
-    async function uploadFile(file, uiHooks, groupName) {
-        const CHUNK_SIZE = 512 * 512; // 500KB per chunk
-        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-
-        uiHooks.container.style.display = 'block';
-        uiHooks.filename.textContent = file.name;
-
-        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++){
-            const start = chunkIndex * CHUNK_SIZE;
-            const end = Math.min(start + CHUNK_SIZE, file.size);
-            const chunk = file.slice(start, end)
-
-            // Buat objek FormData
-            const formData = new FormData();
-            formData.append('chunk', chunk, file.name); // kirim chunk
-            formData.append('filename', file.name); // nama file
-            formData.append('chunk_index', chunkIndex); // nomor chunk
-            formData.append('total_chunks', totalChunks); // total chunk 
-            formData.append('group_name', groupName);
-            console.log(`[${file.name}] mengirim chunk ${chunkIndex} dengan group_name: ${groupName}`); // DEBUG
-
-            try {
-                const response = await fetch('/api/chunk-upload/', {
-                    method: 'POST',
-                    body: formData,
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Server error pada chunk ${chunkIndex}`);
-                }
-                console.log(`Uploading chunk ${chunkIndex} with group: ${groupName}`);
-            } catch (error) {
-                console.error(`Upload chunk ${chunkIndex} untuk file ${file.name} error:`, error);
-                uiHooks.filename.textContent = `Error: ${error.message}`;
-                return; // proses berhenti jika ada error
-            }
-
-            uiHooks.progressBar.value = ((chunkIndex + 1) / totalChunks) * 100;
+    // Event listener untuk menghapus file dari daftar
+    progressPreviewArea.addEventListener('click', (e) => {
+        if (e.target.classList.contains('remove-file-btn')) {
+            const indexToRemove = parseInt(e.target.dataset.index, 10);
+            filesToUpload.splice(indexToRemove, 1);
+            updateFileListUI();
         }
-    }
+    });
+    
+    // Event listener untuk tombol "Upload"
+    uploadBtn.addEventListener('click', async () => {
+        if (filesToUpload.length === 0) return;
 
-    // Event listener form
-    uploadForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
+        uploadBtn.disabled = true;
+        uploadBtn.textContent = 'Uploading...';
 
-        // ID unik sesi sebelum upload dimulai
         const groupName = 'session-' + Math.random().toString(36).substring(2, 9);
-
-        // koneksi websocket
         const socket = new WebSocket(`ws://127.0.0.1:9000/${groupName}/`);
-        console.log("GroupName:", groupName);  // debugging
-
-        socket.onopen = (e) => console.log("Koneksi WebSocket berhasil dibuka");
-        socket.onclose = (e) => console.error("Koneksi WebSocket ditutup");
-
-        // untuk preview pdf setelah menerima pesan websocket
-        socket.onmessage = (e) => {
-            const data = JSON.parse(e.data).message;
-            console.log("Pesan diterima:", data);
-            
+        
+        socket.onopen = () => startUpload(filesToUpload, groupName);
+        socket.onmessage = event => {
+            const data = JSON.parse(event.data).message;
             if (data.status === 'success') {
                 const cleanFileName = data.filename.replace(/[^a-zA-Z0-9_-]/g, '');
                 const previewElement = document.getElementById(`preview-${cleanFileName}`);
-                if (previewElement) {
-                    displayPreview(data.file_url, previewElement);
-                }
+                if (previewElement) displayPreview(data.summary, previewElement);
             }
         };
         
-        const allFileInputs = document.querySelectorAll('.file-input');
-        const fileToUpload = [];
-        allFileInputs.forEach((input, index) => {
-            if (input.files.length > 0){
-                const file = input.files[0];
-                const slotNumber = input.id.split('-')[2];
-                const cleanFileName = file.name.replace(/[\. ]/g, '');
-                
-                const container = document.getElementById(`progress-container-${slotNumber}`);
-            
-            
-                const progressBar = container.querySelector('progress');
-                progressBar.id = `progress-${cleanFileName}`;
-                
-                const previewDiv = container.querySelector('div');
-                previewDiv.id = `preview-${cleanFileName}`;
-                
-                fileToUpload.push({
-                    file: file,
-                    uiHooks: {
-                        container: container,
-                        filename: document.getElementById(`filename-${slotNumber}`),
-                        progressBar: progressBar, // Gunakan variabel yang sudah kita ambil
-                        preview: previewDiv,      // Gunakan variabel yang sudah kita ambil
-                    }
-                });
-
-                /*const container = document.getElementById(`progress-container-${index + 1}`);
-                if (container) { // Add this check
-                    container.querySelector('progress').id = `progress-${cleanFileName}`;
-                    container.querySelector('div').id = `preview-${cleanFileName}`;
-                } else {
-                    console.error(`Element with ID 'progress-container-${index + 1}' not found.`); // Optional: Log a message
-                }*/
-
-            }
-        });
-
-        if (fileToUpload.length === 0) {
-            alert("Pilih setidaknya satu file.");
-            return;
-        }
-
-        const uploadPromises = fileToUpload.map(item => uploadFile(item.file, item.uiHooks, groupName));
-        
-        try {
-            await Promise.all(uploadPromises);
-            console.log("Semua file telah selesai dikirim ke queue");
-        } catch (error) {
-            console.error("Terjadi error saat proses upload:", error);
-        }
+        socket.onclose = () => {
+            console.error("WebSocket closed.");
+            uploadBtn.disabled = false;
+            uploadBtn.textContent = 'Upload Files';
+        };
     });
-
-
-    // fungsi preview pdf
-    function displayPreview(fileUrl, previewElement) {
-        console.log("URL yang diterima untuk preview:", fileUrl);
-        const extension = fileUrl.split('.').pop().toLowerCase();
-        previewElement.innerHTML = `<embed src="${fileUrl}" type="application/pdf" width="100%" height="500px" />`;
+    
+    // Memulai proses upload untuk semua file
+    async function startUpload(files, groupName) {
+        const uploadPromises = files.map(file => uploadFile(file, groupName));
+        await Promise.all(uploadPromises);
     }
 
-    createUploadSlots();
+    // Mengupload satu file
+    async function uploadFile(file, groupName) {
+        const cleanFileName = file.name.replace(/[^a-zA-Z0-9_-]/g, '');
+        const progressBar = document.getElementById(`progress-${cleanFileName}`);
 
+        const CHUNK_SIZE = 1024 * 1024;
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const start = chunkIndex * CHUNK_SIZE;
+            const end = start + CHUNK_SIZE;
+            const chunk = file.slice(start, end);
+
+            const formData = new FormData();
+            formData.append('chunk', chunk, file.name);
+            formData.append('filename', file.name);
+            formData.append('chunk_index', chunkIndex);
+            formData.append('total_chunks', totalChunks);
+            formData.append('group_name', groupName);
+            
+            await fetch('/api/chunk-upload/', { method: 'POST', body: formData });
+            progressBar.value = ((chunkIndex + 1) / totalChunks) * 100;
+        }
+    }
+
+    // Fungsi untuk menampilkan ringkasan
+    function displayPreview(summaryText, previewElement) {
+        previewElement.innerHTML = `
+            <div style="text-align: left; background-color: #e9ecef; border-radius: 8px; padding: 15px; margin-top: 10px;">
+                <h6 style="margin-top: 0; font-weight: 500;">Document Summary:</h6>
+                <p style="white-space: pre-wrap;">${summaryText}</p>
+            </div>
+        `;
+    }
 });
