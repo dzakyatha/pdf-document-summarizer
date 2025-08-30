@@ -1,13 +1,13 @@
-from django.shortcuts import render
 from django.http import JsonResponse
 from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import TemplateView
+import django_rq
+from .tasks import process_chunk
 
-# Create your views here.
 class HomeView(TemplateView):
-    template_name = 'chunkApp/index.html'
+    template_name = 'index.html'
 
 @method_decorator(csrf_exempt, name='dispatch')
 class UploadFileView(View):
@@ -26,5 +26,19 @@ class UploadFileView(View):
 
         # Membaca isi chunk
         chunk_data = file_chunk.read()
+
+        # Mendapatkan queue default
+        queue = django_rq.get_queue('default')
+
+        # Memasukkan task ke queue
+        # Mengirim data biner dan semua metadata yang diperlukan task
+        queue.enqueue(
+            process_chunk,
+            chunk_data,
+            original_filename,
+            chunk_index,
+            total_chunks,
+            group_name
+        )
         
         return JsonResponse({'message':f'Chunk {chunk_index} telah diterima dan dimasukkan ke queue'}, status=202) # 202 = Accepted
