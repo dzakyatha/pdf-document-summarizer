@@ -1,0 +1,109 @@
+body {
+    background-color: #22262b;
+    color: #333;
+    font-family: 'Google Sans', sans-serif;
+    margin: 0;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+}
+
+.container {
+    width: 100%;
+    max-width: 800px;
+    margin: 40px 20px;
+    background-color: #242235;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    padding: 40px;
+}
+
+.header h1 {
+    font-size: 2.5rem;
+    font-weight: 500;
+    color: #fdfbfb;
+    margin-bottom: 8px;
+}
+
+.header p {
+    font-size: 1.1rem;
+    color: #f2f5f8;
+    margin-bottom: 30px;
+}
+
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 30px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+}
+
+.controls label {
+    font-weight: 500;
+}
+
+.controls input[type="number"] {
+    width: 70px;
+    padding: 8px;
+    border: 1px solid #dadce0;
+    border-radius: 4px;
+    font-size: 1rem;
+}
+
+.btn-primary, .btn-secondary {
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    font-weight: 500;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.btn-primary {
+    background-color: #1a73e8;
+    color: rgb(242, 242, 247);
+    width: 100%;
+    font-size: 1.1rem;
+    padding: 12px;
+}
+
+.btn-primary:hover {
+    background-color: #185abc;
+}
+
+.btn-secondary {
+    background-color: #e8eaed;
+    color: #3c4043;
+}
+
+.btn-secondary:hover {
+    background-color: #dadce0;
+}
+
+.upload-slot {
+    border: 1px solid #dadce0;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.upload-slot input[type="file"] {
+    margin-top: 10px;
+    color: #edf0f3;
+}
+
+.upload-slot progress {
+    width: 100%;
+    margin-top: 10px;
+}
+
+.upload-slot-header {
+    font-weight: 500;
+    color: #edf0f3;
+    margin-bottom: 10px;
+}
