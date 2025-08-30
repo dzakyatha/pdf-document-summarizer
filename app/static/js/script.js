@@ -7,7 +7,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let filesToUpload = [];
     let summaryData = {}; // Menyimpan data ringkasan untuk setiap file
     let processedFiles = new Set(); // Track file yang sudah berhasil diproses
+    let promptReadyFiles = new Set(); // Track file yang sudah mendapat prompt (intermediate state)
     let isUploading = false; // Track status upload sedang berlangsung
+    let socket;
 
     // Mencegah browser membuka file saat di-drag
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -43,6 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Hapus juga data ringkasan dan tracking
                 delete summaryData[cleanFileName];
                 processedFiles.delete(cleanFileName);
+                promptReadyFiles.delete(cleanFileName);
             }
         });
 
@@ -84,29 +87,30 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Fungsi untuk mengecek file yang benar-benar belum diproses sama sekali
+    function getUnprocessedFiles() {
+        return filesToUpload.filter(file => {
+            const cleanFileName = file.name.replace(/[^a-zA-Z0-9_.-]/g, '');
+            // File dianggap "unprocessed" jika belum ada prompt editor DAN belum ada ringkasan
+            return !promptReadyFiles.has(cleanFileName) && !processedFiles.has(cleanFileName);
+        });
+    }
+
     // Fungsi untuk mengupdate visibilitas tombol upload
     function updateUploadButtonVisibility() {
-        const hasUnprocessedFiles = filesToUpload.some(file => {
-            const cleanFileName = file.name.replace(/[^a-zA-Z0-9_.-]/g, '');
-            return !processedFiles.has(cleanFileName);
-        });
+        const unprocessedFiles = getUnprocessedFiles();
 
         if (isUploading) {
             // Saat sedang upload, disable tombol dan ubah teks
             uploadBtn.style.display = 'block';
             uploadBtn.disabled = true;
             uploadBtn.textContent = 'Uploading...';
-        } else if (hasUnprocessedFiles) {
+        } else if (unprocessedFiles.length > 0) {
             uploadBtn.style.display = 'block';
             uploadBtn.disabled = false;
             uploadBtn.textContent = 'Upload';
-        } else if (filesToUpload.length > 0) {
-            // Semua file sudah diproses, sembunyikan tombol atau ubah teks
-            uploadBtn.style.display = 'none';
-            // Atau alternatif, tampilkan tapi disable:
-            // uploadBtn.disabled = true;
-            // uploadBtn.textContent = 'Semua File Sudah Diproses';
         } else {
+            // Sembunyikan tombol upload jika tidak ada file baru atau semua file sudah diupload
             uploadBtn.style.display = 'none';
         }
     }
@@ -132,6 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Hapus data ringkasan dan tracking
             delete summaryData[cleanFileName];
             processedFiles.delete(cleanFileName);
+            promptReadyFiles.delete(cleanFileName);
             
             updateFileListUI();
             updateUploadButtonVisibility();
@@ -145,7 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 e.target.textContent = 'Sembunyikan';
             } else {
                 summaryContent.style.display = 'none';
-                e.target.textContent = 'Lihat Ringkasan';
+                e.target.textContent = '📄 Lihat Ringkasan';
             }
         }
     });
@@ -207,11 +212,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 4000);
     }
 
-    // Event listener untuk tombol Upload
+    // Event listener utama untuk tombol Upload
     uploadBtn.addEventListener('click', async () => {
         // Cegah multiple upload yang bersamaan - SET DI AWAL SEKALI
         if (isUploading) {
-            showNotification('Upload sedang berlangsung, mohon tunggu...', 'warning');
+            showNotification('⏳ Upload sedang berlangsung, mohon tunggu...', 'warning');
+            return;
+        } else if (filesToUpload.length === 0) {
+            showNotification('⚠️ Tidak ada file untuk diupload!', 'warning');
             return;
         }
 
@@ -219,76 +227,128 @@ document.addEventListener('DOMContentLoaded', () => {
         isUploading = true;
         updateUploadButtonVisibility();
 
-        // Filter hanya file yang belum diproses
-        const unprocessedFiles = filesToUpload.filter(file => {
-            const cleanFileName = file.name.replace(/[^a-zA-Z0-9_.-]/g, '');
-            return !processedFiles.has(cleanFileName);
-        });
+        // Filter hanya file yang benar-benar belum diproses sama sekali
+        const unprocessedFiles = getUnprocessedFiles();
 
         if (unprocessedFiles.length === 0) {
-            showNotification('Semua file sudah diproses! Tidak ada file baru untuk diupload.', 'info');
+            showNotification('ℹ️ Semua file sudah diupload atau sedang diproses!', 'info');
             // Reset jika tidak ada file untuk diproses
             isUploading = false;
             updateUploadButtonVisibility();
             return;
         }
 
+        // Tutup WebSocket yang lama jika ada
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.close();
+        }
+
         const groupName = 'session-' + Math.random().toString(36).substring(2, 9);
-        const socket = new WebSocket(`ws://127.0.0.1:9000/${groupName}/`);
+        socket = new WebSocket(`ws://127.0.0.1:9000/${groupName}/`);
         
         socket.onopen = () => {
+            console.log("WebSocket terhubung untuk sesi: ", groupName);
             startUpload(unprocessedFiles, groupName);
         };
         
         socket.onmessage = event => {
-            const data = JSON.parse(event.data).message;
-            if (data.status === 'success') {
-                const cleanFileName = data.filename.replace(/[^a-zA-Z0-9_.-]/g, '');
-                
-                // Simpan data ringkasan dan tandai sebagai sudah diproses
-                summaryData[cleanFileName] = data.summary;
-                processedFiles.add(cleanFileName);
-                
-                const previewContainer = document.getElementById(`preview-container-${cleanFileName}`);
-                if (previewContainer) {
-                    showViewSummaryButton(data.summary, cleanFileName, previewContainer);
+            try {
+                const parsedData = JSON.parse(event.data);
+
+                if (!parsedData || !parsedData.message) {
+                    console.error('Invalid message format:', parsedData);
+                    return;
                 }
+
+                const data = parsedData.message;
+
+                if (!data.filename) {
+                    console.error('Filename is missing in message data:', data);
+                    return;
+                }
+
+                const cleanFileName = data.filename.replace(/[^a-zA-Z0-9_.-]/g, '');
+                const previewContainer = document.getElementById(`preview-container-${cleanFileName}`);
                 
-                // Notifikasi sukses untuk setiap file
-                showNotification(`Ringkasan berhasil dibuat untuk: ${data.filename}`, 'success');
+                if (!data.type) {
+                    console.error('Message missing type:', data);
+                    return;
+                }
+
+                switch (data.type) {
+                    case 'prompt_ready':
+                        if (!data.prompt) {
+                            console.error('Prompt ready message missing prompt text:', data);
+                            return;
+                        }
+                        // Tandai file sebagai sudah mendapat prompt
+                        promptReadyFiles.add(cleanFileName);
+                        showPromptEditor(data.prompt, cleanFileName, previewContainer);
+                        break;
+                        
+                    case 'summary_complete':
+                        if (!data.summary) {
+                            console.error('Summary complete message missing summary text:', data);
+                            return;
+                        }
+                        summaryData[cleanFileName] = data.summary;
+                        processedFiles.add(cleanFileName);
+                        
+                        if (previewContainer) {
+                            showViewSummaryButton(data.summary, cleanFileName, previewContainer);
+                        } else {
+                            console.error('Preview container not found for:', cleanFileName);
+                        }
+                        
+                        showNotification(`✅ Ringkasan berhasil dibuat untuk: ${data.filename}`, 'success');
+                        break;
+                        
+                    default:
+                        console.warn('Unknown message type:', data.type);
+                }
+
+            } catch (error) {
+                console.error('Error processing WebSocket message:', error);
+                console.error('Raw message that caused error:', event.data);
             }
         };
         
         socket.onclose = (event) => {
             console.log("WebSocket closed. Code:", event.code, "Reason:", event.reason);
-            // Reset status upload dan update UI
+            // Reset status upload, tapi jangan tampilkan tombol lagi
             isUploading = false;
-            updateUploadButtonVisibility();
+            // Hanya update jika ada file baru yang ditambahkan
+            if (getUnprocessedFiles().length > 0) {
+                updateUploadButtonVisibility();
+            }
         };
         
         socket.onerror = (error) => {
             console.error("WebSocket error:", error);
-            showNotification('Terjadi kesalahan saat menghubungkan ke server', 'error');
-            // Reset status upload dan update UI
+            showNotification('❌ Terjadi kesalahan saat menghubungkan ke server', 'error');
+            // Reset status upload dan update UI hanya jika ada file baru
             isUploading = false;
-            updateUploadButtonVisibility();
+            if (getUnprocessedFiles().length > 0) {
+                updateUploadButtonVisibility();
+            }
         };
     });
     
     // Memulai proses upload untuk semua file
     async function startUpload(files, groupName) {
         try {
-            showNotification(`Memulai upload ${files.length} file...`, 'info');
+            showNotification(`🚀 Memulai upload ${files.length} file...`, 'info');
             const uploadPromises = files.map(file => uploadFile(file, groupName));
             await Promise.all(uploadPromises);
             
-            showNotification(`Semua file berhasil diupload dan diproses!`, 'success');
+            showNotification(`📤 Semua file berhasil diupload!`, 'success');
         } catch (error) {
             console.error('Error during upload:', error);
-            showNotification('Terjadi kesalahan saat mengupload file', 'error');
+            showNotification('❌ Terjadi kesalahan saat mengupload file', 'error');
         } finally {
-            isUploading = false;
-            updateUploadButtonVisibility();
+            // Setelah upload selesai, langsung sembunyikan tombol tanpa reset isUploading
+            uploadBtn.style.display = 'none';
+            isUploading = false; // Reset untuk file baru yang mungkin ditambahkan nanti
         }
     }
 
@@ -330,6 +390,43 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Fungsi untuk menampilkan editor prompt
+    function showPromptEditor(promptText, cleanFileName, containerElement) {
+        containerElement.innerHTML = `
+            <div style="margin-top: 10px; text-align: left; border: 1px solid #ccc; padding: 10px; border-radius: 8px; background-color: #f8f9fa;">
+                <label for="prompt-editor-${cleanFileName}" style="font-weight: bold; margin-bottom: 5px; display: block; color: #495057;">📝 Prompt</label>
+                <p style="font-size: 12px; color: #6c757d; margin-top: 0; margin-bottom: 8px;">Anda bisa mengubah prompt berikut sebelum dikirimkan ke model</p>
+                <textarea id="prompt-editor-${cleanFileName}" style="width: 100%; height: 150px; border-radius: 4px; border: 1px solid #ccc; padding: 8px; font-family: monospace;">${promptText}</textarea>
+                <button type="button" class="submit-prompt-btn" data-filename="${cleanFileName}" style="margin-top: 10px; background-color: #28a745; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                    🚀 Submit
+                </button>
+            </div>
+        `;
+    }
+
+    // Event listener untuk tombol submit prompt
+    progressPreviewArea.addEventListener('click', (e) => {
+        if (e.target.classList.contains('submit-prompt-btn')) {
+            const cleanFileName = e.target.dataset.filename;
+            const editor = document.getElementById(`prompt-editor-${cleanFileName}`);
+            const finalPrompt = editor.value;
+
+            // Kirim prompt final kembali ke server melalui WebSocket
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({
+                    type: 'execute_summarization',
+                    prompt: finalPrompt,
+                    filename: filesToUpload.find(f => f.name.replace(/[^a-zA-Z0-9_.-]/g, '') === cleanFileName).name,
+                }));
+                // Tampilkan status loading
+                e.target.parentElement.innerHTML = '<div style="padding: 20px; text-align: center; background-color: #e3f2fd; border-radius: 8px; color: #1976d2;"><strong>⏳ Sedang membuatkan ringkasan...</strong><br><small>Mohon tunggu, model sedang bekerja</small></div>';
+                showNotification('📝 Prompt dikirim, sedang memproses...', 'info');
+            } else {
+                showNotification('❌ Koneksi WebSocket terputus', 'error');
+            }
+        }
+    });
+
     // Fungsi untuk menampilkan tombol "Lihat Ringkasan" yang lebih kecil dan di sebelah kiri
     function showViewSummaryButton(summaryText, cleanFileName, containerElement) {
         containerElement.innerHTML = `
@@ -349,13 +446,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         "
                         onmouseover="this.style.backgroundColor='#0056b3'"
                         onmouseout="this.style.backgroundColor='#007bff'">
-                     Lihat Ringkasan
+                     📄 Lihat Ringkasan
                 </button>
             </div>
             <div id="summary-content-${cleanFileName}" 
                  style="display: none; text-align: left; background-color: #f8f9fa; border-radius: 8px; padding: 15px; margin-top: 10px; border-left: 4px solid #007bff;">
                 <div style="margin-bottom: 10px;">
-                    <strong style="color: #495057;">Ringkasan Dokumen:</strong>
+                    <strong style="color: #495057;">📋 Ringkasan Dokumen:</strong>
                 </div>
                 <p style="white-space: pre-wrap; margin: 0; line-height: 1.5; color: #000000ff;">${summaryText}</p>
             </div>
