@@ -31,15 +31,11 @@ def process_chunk(chunk_data, original_filename, chunk_index, total_chunks, grou
             port=6379, 
             db=0
         )
-        final_file_url = os.path.join(settings.MEDIA_URL, 'uploads', original_filename).replace("\\", "/")
-        
+
         payload = {
-            'group_name': group_name, # Untuk routing di server websocket
-            'payload': {              # Isi pesan untuk frontend
-                'status': 'success',
-                'file_url': final_file_url,
-                'filename': original_filename,
-            }
+            'group_name': group_name,
+            'file_path': final_file_path,  # Mengirim path sistem file
+            'filename': original_filename,
         }
         
         # Publikasi pesan ke channel "upload_notifications"
