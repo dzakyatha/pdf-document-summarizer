@@ -1,6 +1,6 @@
 # PDF Document Summarizer
 
-![alt text](img\initial_page.png)
+![alt text](img/initial_page.png)
 
 A simple prototype web application that leverages a fine-tuned **Large Language Model (LLM)** to provide structured summaries and insights from PDF documents specifically for Indonesian National Military. This project was developed as a task for my internship at [Ciheul Technologies](https://www.ciheul.com/).
 
@@ -18,7 +18,7 @@ A simple prototype web application that leverages a fine-tuned **Large Language 
 
 The application is built on a distributed microservices architecture, separating frontend, backend, and AI processing tasks.
 
-![alt text](img\system_architecture.png)
+![alt text](img/system_architecture.png)
 
 **System Workflow**
 
